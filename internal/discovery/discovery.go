@@ -127,23 +127,20 @@ func (r *CRDiscoverer) ResolveGVKToGVKPs(gvk schema.GroupVersionKind) (resolvedG
 	hasKind := k != "" && k != "*"
 	// No need to resolve, return.
 	if hasVersion && hasKind {
-		var p string
 		for _, el := range r.Map[g][v] {
 			if el.Kind == k {
-				p = el.Plural
-				break
+				return []groupVersionKindPlural{
+					{
+						GroupVersionKind: schema.GroupVersionKind{
+							Group:   g,
+							Version: v,
+							Kind:    k,
+						},
+						Plural: el.Plural,
+					},
+				}, nil
 			}
 		}
-		return []groupVersionKindPlural{
-			{
-				GroupVersionKind: schema.GroupVersionKind{
-					Group:   g,
-					Version: v,
-					Kind:    k,
-				},
-				Plural: p,
-			},
-		}, nil
 	}
 	if hasVersion && !hasKind {
 		kinds := r.Map[g][v]
@@ -203,10 +200,6 @@ func (r *CRDiscoverer) PollForCacheUpdates(
 ) {
 	// The interval at which we will check the cache for updates.
 	t := time.NewTicker(Interval)
-	// Track previous context to allow refreshing cache.
-	olderContext, olderCancel := context.WithCancel(ctx)
-	// Prevent context leak (kill the last metric handler instance).
-	defer olderCancel()
 	generateMetrics := func() {
 		// Get families for discovered factories.
 		customFactories, err := factoryGenerator()
@@ -239,21 +232,8 @@ func (r *CRDiscoverer) PollForCacheUpdates(
 		r.SafeWrite(func() {
 			r.WasUpdated = false
 		})
-		// Run the metrics handler with updated configs.
-		olderContext, olderCancel = context.WithCancel(ctx)
-		go func() {
-			// Blocks indefinitely until the unbuffered context is cancelled to serve metrics for that duration.
-			err = m.Run(olderContext)
-			if err != nil {
-				// Check if context was cancelled.
-				select {
-				case <-olderContext.Done():
-					// Context cancelled, don't really need to log this though.
-				default:
-					klog.ErrorS(err, "failed to run metrics handler")
-				}
-			}
-		}()
+		// Update metric handler with the new configs.
+		m.BuildWriters(ctx)
 	}
 	go func() {
 		for range t.C {
@@ -269,7 +249,6 @@ func (r *CRDiscoverer) PollForCacheUpdates(
 					shouldGenerateMetrics = r.WasUpdated
 				})
 				if shouldGenerateMetrics {
-					olderCancel()
 					generateMetrics()
 					klog.InfoS("discovery finished, cache updated")
 				}

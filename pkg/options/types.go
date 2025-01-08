@@ -107,6 +107,17 @@ func (r *ResourceSet) Type() string {
 // NodeType represents a nodeName to query from.
 type NodeType string
 
+// Set sets the node name to NodeType.
+func (n *NodeType) Set(value string) error {
+	*n = NodeType(value)
+	return nil
+}
+
+// String gets node name.
+func (n NodeType) String() string {
+	return string(n)
+}
+
 // GetNodeFieldSelector returns a nodename field selector.
 func (n *NodeType) GetNodeFieldSelector() string {
 	if string(*n) != "" {

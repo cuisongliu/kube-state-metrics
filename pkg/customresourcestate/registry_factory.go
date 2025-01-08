@@ -72,6 +72,10 @@ func compileCommon(c MetricMeta) (*compiledCommon, error) {
 func compileFamily(f Generator, resource Resource) (*compiledFamily, error) {
 	labels := resource.Labels.Merge(f.Labels)
 
+	if f.Each.Type == metric.Info && !strings.HasSuffix(f.Name, "_info") {
+		klog.InfoS("Info metric does not have _info suffix", "gvk", resource.GroupVersionKind.String(), "name", f.Name)
+	}
+
 	metric, err := newCompiledMetric(f.Each)
 	if err != nil {
 		return nil, fmt.Errorf("compiling metric: %w", err)
@@ -120,16 +124,18 @@ type compiledEach compiledMetric
 
 type compiledCommon struct {
 	labelFromPath map[string]valuePath
-	path          valuePath
 	t             metric.Type
+	path          valuePath
 }
 
 func (c compiledCommon) Path() valuePath {
 	return c.path
 }
+
 func (c compiledCommon) LabelFromPath() map[string]valuePath {
 	return c.labelFromPath
 }
+
 func (c compiledCommon) Type() metric.Type {
 	return c.t
 }
@@ -149,7 +155,7 @@ type compiledMetric interface {
 // newCompiledMetric returns a compiledMetric depending on the given metric type.
 func newCompiledMetric(m Metric) (compiledMetric, error) {
 	switch m.Type {
-	case MetricTypeGauge:
+	case metric.Gauge:
 		if m.Gauge == nil {
 			return nil, errors.New("expected each.gauge to not be nil")
 		}
@@ -168,7 +174,7 @@ func newCompiledMetric(m Metric) (compiledMetric, error) {
 			NilIsZero:      m.Gauge.NilIsZero,
 			labelFromKey:   m.Gauge.LabelFromKey,
 		}, nil
-	case MetricTypeInfo:
+	case metric.Info:
 		if m.Info == nil {
 			return nil, errors.New("expected each.info to not be nil")
 		}
@@ -181,7 +187,7 @@ func newCompiledMetric(m Metric) (compiledMetric, error) {
 			compiledCommon: *cc,
 			labelFromKey:   m.Info.LabelFromKey,
 		}, nil
-	case MetricTypeStateSet:
+	case metric.StateSet:
 		if m.StateSet == nil {
 			return nil, errors.New("expected each.stateSet to not be nil")
 		}
@@ -192,7 +198,7 @@ func newCompiledMetric(m Metric) (compiledMetric, error) {
 		}
 		valueFromPath, err := compilePath(m.StateSet.ValueFrom)
 		if err != nil {
-			return nil, fmt.Errorf("each.gauge.valueFrom: %w", err)
+			return nil, fmt.Errorf("each.stateSet.valueFrom: %w", err)
 		}
 		return &compiledStateSet{
 			compiledCommon: *cc,
@@ -207,9 +213,9 @@ func newCompiledMetric(m Metric) (compiledMetric, error) {
 
 type compiledGauge struct {
 	compiledCommon
+	labelFromKey string
 	ValueFrom    valuePath
 	NilIsZero    bool
-	labelFromKey string
 }
 
 func (c *compiledGauge) Values(v interface{}) (result []eachValue, errs []error) {
@@ -278,6 +284,9 @@ func (c *compiledGauge) Values(v interface{}) (result []eachValue, errs []error)
 				onError(fmt.Errorf("[%d]: %w", i, err))
 				continue
 			}
+			if value == nil {
+				continue
+			}
 			addPathLabels(it, c.LabelFromPath(), value.Labels)
 			result = append(result, *value)
 		}
@@ -285,6 +294,9 @@ func (c *compiledGauge) Values(v interface{}) (result []eachValue, errs []error)
 		value, err := c.value(v)
 		if err != nil {
 			onError(err)
+			break
+		}
+		if value == nil {
 			break
 		}
 		addPathLabels(v, c.LabelFromPath(), value.Labels)
@@ -366,9 +378,9 @@ func (c *compiledInfo) values(v interface{}) (result []eachValue, err []error) {
 
 type compiledStateSet struct {
 	compiledCommon
+	LabelName string
 	ValueFrom valuePath
 	List      []string
-	LabelName string
 }
 
 func (c *compiledStateSet) Values(v interface{}) (result []eachValue, errs []error) {
@@ -467,6 +479,7 @@ func (e eachValue) DefaultLabels(defaults map[string]string) {
 		}
 	}
 }
+
 func (e eachValue) ToMetric() *metric.Metric {
 	var keys, values []string
 	for k := range e.Labels {
@@ -485,11 +498,11 @@ func (e eachValue) ToMetric() *metric.Metric {
 }
 
 type compiledFamily struct {
-	Name          string
-	Help          string
 	Each          compiledEach
 	Labels        map[string]string
 	LabelFromPath map[string]valuePath
+	Name          string
+	Help          string
 	ErrorLogV     klog.Level
 }
 
@@ -507,21 +520,24 @@ func addPathLabels(obj interface{}, labels map[string]valuePath, result map[stri
 	// always do that first so other labels can override
 	var stars []string
 	for k := range labels {
-		if strings.HasPrefix(k, "*") {
+		if strings.HasPrefix(k, "*") || strings.HasSuffix(k, "*") {
 			stars = append(stars, k)
 		}
 	}
 	sort.Strings(stars)
-	for _, k := range stars {
-		m := labels[k].Get(obj)
+	for _, star := range stars {
+		m := labels[star].Get(obj)
 		if kv, ok := m.(map[string]interface{}); ok {
 			for k, v := range kv {
+				if strings.HasSuffix(star, "*") {
+					k = star[:len(star)-1] + k
+				}
 				result[store.SanitizeLabelName(k)] = fmt.Sprintf("%v", v)
 			}
 		}
 	}
 	for k, v := range labels {
-		if strings.HasPrefix(k, "*") {
+		if strings.HasPrefix(k, "*") || strings.HasSuffix(k, "*") {
 			continue
 		}
 		value := v.Get(obj)
@@ -534,8 +550,8 @@ func addPathLabels(obj interface{}, labels map[string]valuePath, result map[stri
 }
 
 type pathOp struct {
-	part string
 	op   func(interface{}) interface{}
+	part string
 }
 
 type valuePath []pathOp
@@ -613,6 +629,16 @@ func compilePath(path []string) (out valuePath, _ error) {
 				part: part,
 				op: func(m interface{}) interface{} {
 					if mp, ok := m.(map[string]interface{}); ok {
+						kv := strings.Split(part, "=")
+						if len(kv) == 2 /* k=v */ {
+							key := kv[0]
+							val := kv[1]
+							if v, ok := mp[key]; ok {
+								if v == val {
+									return v
+								}
+							}
+						}
 						return mp[part]
 					} else if s, ok := m.([]interface{}); ok {
 						i, err := strconv.Atoi(part)
@@ -701,12 +727,12 @@ func toFloat64(value interface{}, nilIsZero bool) (float64, error) {
 		}
 		return 0, nil
 	case string:
-		// The string contains a boolean as a string
+		// The string is a boolean or `"unknown"` according to https://pkg.go.dev/k8s.io/apimachinery/pkg/apis/meta/v1#Condition
 		normalized := strings.ToLower(value.(string))
 		if normalized == "true" || normalized == "yes" {
 			return 1, nil
 		}
-		if normalized == "false" || normalized == "no" {
+		if normalized == "false" || normalized == "no" || normalized == "unknown" {
 			return 0, nil
 		}
 		// The string contains a RFC3339 timestamp

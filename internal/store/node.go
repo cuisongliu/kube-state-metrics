@@ -55,6 +55,7 @@ func nodeMetricFamilies(allowAnnotationsList, allowLabelsList []string) []genera
 		createNodeStatusAllocatableFamilyGenerator(),
 		createNodeStatusCapacityFamilyGenerator(),
 		createNodeStatusConditionFamilyGenerator(),
+		createNodeStateAddressFamilyGenerator(),
 	}
 }
 
@@ -105,6 +106,29 @@ func createNodeCreatedFamilyGenerator() generator.FamilyGenerator {
 	)
 }
 
+func createNodeStateAddressFamilyGenerator() generator.FamilyGenerator {
+	return *generator.NewFamilyGeneratorWithStability(
+		"kube_node_status_addresses",
+		"Node address information.",
+		metric.Gauge,
+		basemetrics.ALPHA,
+		"",
+		wrapNodeFunc(func(n *v1.Node) *metric.Family {
+			ms := []*metric.Metric{}
+			for _, address := range n.Status.Addresses {
+				ms = append(ms, &metric.Metric{
+					LabelKeys:   []string{"type", "address"},
+					LabelValues: []string{string(address.Type), address.Address},
+					Value:       1,
+				})
+			}
+			return &metric.Family{
+				Metrics: ms,
+			}
+		}),
+	)
+}
+
 func createNodeInfoFamilyGenerator() generator.FamilyGenerator {
 	return *generator.NewFamilyGeneratorWithStability(
 		"kube_node_info",
@@ -128,12 +152,13 @@ func createNodeInfoFamilyGenerator() generator.FamilyGenerator {
 				n.Status.NodeInfo.OSImage,
 				n.Status.NodeInfo.ContainerRuntimeVersion,
 				n.Status.NodeInfo.KubeletVersion,
-				n.Status.NodeInfo.KubeProxyVersion,
+				"deprecated",
 				n.Spec.ProviderID,
 				n.Spec.PodCIDR,
 				n.Status.NodeInfo.SystemUUID,
 			}
 
+			// TODO: remove internal_ip in v3, replaced by kube_node_status_addresses
 			internalIP := ""
 			for _, address := range n.Status.Addresses {
 				if address.Type == "InternalIP" {
@@ -164,6 +189,9 @@ func createNodeAnnotationsGenerator(allowAnnotationsList []string) generator.Fam
 		basemetrics.ALPHA,
 		"",
 		wrapNodeFunc(func(n *v1.Node) *metric.Family {
+			if len(allowAnnotationsList) == 0 {
+				return &metric.Family{}
+			}
 			annotationKeys, annotationValues := createPrometheusLabelKeysValues("annotation", n.Annotations, allowAnnotationsList)
 			return &metric.Family{
 				Metrics: []*metric.Metric{
@@ -186,6 +214,9 @@ func createNodeLabelsGenerator(allowLabelsList []string) generator.FamilyGenerat
 		basemetrics.STABLE,
 		"",
 		wrapNodeFunc(func(n *v1.Node) *metric.Family {
+			if len(allowLabelsList) == 0 {
+				return &metric.Family{}
+			}
 			labelKeys, labelValues := createPrometheusLabelKeysValues("label", n.Labels, allowLabelsList)
 			return &metric.Family{
 				Metrics: []*metric.Metric{
@@ -293,7 +324,7 @@ func createNodeStatusAllocatableFamilyGenerator() generator.FamilyGenerator {
 							SanitizeLabelName(string(resourceName)),
 							string(constant.UnitCore),
 						},
-						Value: float64(val.MilliValue()) / 1000,
+						Value: convertValueToFloat64(&val),
 					})
 				case v1.ResourceStorage:
 					fallthrough
@@ -305,7 +336,7 @@ func createNodeStatusAllocatableFamilyGenerator() generator.FamilyGenerator {
 							SanitizeLabelName(string(resourceName)),
 							string(constant.UnitByte),
 						},
-						Value: float64(val.MilliValue()) / 1000,
+						Value: convertValueToFloat64(&val),
 					})
 				case v1.ResourcePods:
 					ms = append(ms, &metric.Metric{
@@ -313,7 +344,7 @@ func createNodeStatusAllocatableFamilyGenerator() generator.FamilyGenerator {
 							SanitizeLabelName(string(resourceName)),
 							string(constant.UnitInteger),
 						},
-						Value: float64(val.MilliValue()) / 1000,
+						Value: convertValueToFloat64(&val),
 					})
 				default:
 					if isHugePageResourceName(resourceName) {
@@ -322,7 +353,7 @@ func createNodeStatusAllocatableFamilyGenerator() generator.FamilyGenerator {
 								SanitizeLabelName(string(resourceName)),
 								string(constant.UnitByte),
 							},
-							Value: float64(val.MilliValue()) / 1000,
+							Value: convertValueToFloat64(&val),
 						})
 					}
 					if isAttachableVolumeResourceName(resourceName) {
@@ -331,7 +362,7 @@ func createNodeStatusAllocatableFamilyGenerator() generator.FamilyGenerator {
 								SanitizeLabelName(string(resourceName)),
 								string(constant.UnitByte),
 							},
-							Value: float64(val.MilliValue()) / 1000,
+							Value: convertValueToFloat64(&val),
 						})
 					}
 					if isExtendedResourceName(resourceName) {
@@ -340,7 +371,7 @@ func createNodeStatusAllocatableFamilyGenerator() generator.FamilyGenerator {
 								SanitizeLabelName(string(resourceName)),
 								string(constant.UnitInteger),
 							},
-							Value: float64(val.MilliValue()) / 1000,
+							Value: convertValueToFloat64(&val),
 						})
 					}
 				}
@@ -376,7 +407,7 @@ func createNodeStatusCapacityFamilyGenerator() generator.FamilyGenerator {
 							SanitizeLabelName(string(resourceName)),
 							string(constant.UnitCore),
 						},
-						Value: float64(val.MilliValue()) / 1000,
+						Value: convertValueToFloat64(&val),
 					})
 				case v1.ResourceStorage:
 					fallthrough
@@ -388,7 +419,7 @@ func createNodeStatusCapacityFamilyGenerator() generator.FamilyGenerator {
 							SanitizeLabelName(string(resourceName)),
 							string(constant.UnitByte),
 						},
-						Value: float64(val.MilliValue()) / 1000,
+						Value: convertValueToFloat64(&val),
 					})
 				case v1.ResourcePods:
 					ms = append(ms, &metric.Metric{
@@ -396,7 +427,7 @@ func createNodeStatusCapacityFamilyGenerator() generator.FamilyGenerator {
 							SanitizeLabelName(string(resourceName)),
 							string(constant.UnitInteger),
 						},
-						Value: float64(val.MilliValue()) / 1000,
+						Value: convertValueToFloat64(&val),
 					})
 				default:
 					if isHugePageResourceName(resourceName) {
@@ -405,7 +436,7 @@ func createNodeStatusCapacityFamilyGenerator() generator.FamilyGenerator {
 								SanitizeLabelName(string(resourceName)),
 								string(constant.UnitByte),
 							},
-							Value: float64(val.MilliValue()) / 1000,
+							Value: convertValueToFloat64(&val),
 						})
 					}
 					if isAttachableVolumeResourceName(resourceName) {
@@ -414,7 +445,7 @@ func createNodeStatusCapacityFamilyGenerator() generator.FamilyGenerator {
 								SanitizeLabelName(string(resourceName)),
 								string(constant.UnitByte),
 							},
-							Value: float64(val.MilliValue()) / 1000,
+							Value: convertValueToFloat64(&val),
 						})
 					}
 					if isExtendedResourceName(resourceName) {
@@ -423,7 +454,7 @@ func createNodeStatusCapacityFamilyGenerator() generator.FamilyGenerator {
 								SanitizeLabelName(string(resourceName)),
 								string(constant.UnitInteger),
 							},
-							Value: float64(val.MilliValue()) / 1000,
+							Value: convertValueToFloat64(&val),
 						})
 					}
 				}
@@ -489,7 +520,7 @@ func wrapNodeFunc(f func(*v1.Node) *metric.Family) func(interface{}) *metric.Fam
 	}
 }
 
-func createNodeListWatch(kubeClient clientset.Interface, ns string, fieldSelector string) cache.ListerWatcher {
+func createNodeListWatch(kubeClient clientset.Interface, _ string, _ string) cache.ListerWatcher {
 	return &cache.ListWatch{
 		ListFunc: func(opts metav1.ListOptions) (runtime.Object, error) {
 			return kubeClient.CoreV1().Nodes().List(context.TODO(), opts)
