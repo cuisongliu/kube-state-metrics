@@ -21,7 +21,6 @@ import (
 	"strings"
 
 	basemetrics "k8s.io/component-base/metrics"
-	"k8s.io/klog/v2"
 
 	"k8s.io/kube-state-metrics/v2/pkg/metric"
 )
@@ -31,13 +30,13 @@ import (
 // DeprecatedVersion is defined only if the metric for which this options applies is,
 // in fact, deprecated.
 type FamilyGenerator struct {
+	GenerateFunc      func(obj interface{}) *metric.Family
 	Name              string
 	Help              string
 	Type              metric.Type
-	OptIn             bool
 	DeprecatedVersion string
 	StabilityLevel    basemetrics.StabilityLevel
-	GenerateFunc      func(obj interface{}) *metric.Family
+	OptIn             bool
 }
 
 // NewFamilyGeneratorWithStability creates new FamilyGenerator instances with metric
@@ -74,10 +73,6 @@ func (g *FamilyGenerator) Generate(obj interface{}) *metric.Family {
 	family := g.GenerateFunc(obj)
 	family.Name = g.Name
 	family.Type = g.Type
-	// OpenMetrics spec requires that all Info metrics have a _info suffix.
-	if family.Type == metric.Info && !strings.HasSuffix(family.Name, "_info") {
-		klog.InfoS("Info metric %s does not have _info suffix", family.Name)
-	}
 	return family
 }
 
@@ -86,8 +81,6 @@ func (g *FamilyGenerator) generateHeader() string {
 	header.WriteString("# HELP ")
 	header.WriteString(g.Name)
 	header.WriteByte(' ')
-	// TODO(#1833): remove if-else after all metrics are attached with right
-	// StabilityLevel.
 	if g.StabilityLevel == basemetrics.STABLE {
 		header.WriteString(fmt.Sprintf("[%v] %v", g.StabilityLevel, g.Help))
 	} else {

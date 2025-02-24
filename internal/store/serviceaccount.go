@@ -56,18 +56,16 @@ func createServiceAccountInfoFamilyGenerator() generator.FamilyGenerator {
 		basemetrics.ALPHA,
 		"",
 		wrapServiceAccountFunc(func(sa *v1.ServiceAccount) *metric.Family {
-			var labelKeys []string
-			var labelValues []string
+			var automountToken string
 
 			if sa.AutomountServiceAccountToken != nil {
-				labelKeys = append(labelKeys, "automount_token")
-				labelValues = append(labelValues, strconv.FormatBool(*sa.AutomountServiceAccountToken))
+				automountToken = strconv.FormatBool(*sa.AutomountServiceAccountToken)
 			}
 
 			return &metric.Family{
 				Metrics: []*metric.Metric{{
-					LabelKeys:   labelKeys,
-					LabelValues: labelValues,
+					LabelKeys:   []string{"automount_token"},
+					LabelValues: []string{automountToken},
 					Value:       1,
 				}},
 			}
@@ -183,6 +181,9 @@ func createServiceAccountAnnotationsGenerator(allowAnnotations []string) generat
 		basemetrics.ALPHA,
 		"",
 		wrapServiceAccountFunc(func(sa *v1.ServiceAccount) *metric.Family {
+			if len(allowAnnotations) == 0 {
+				return &metric.Family{}
+			}
 			annotationKeys, annotationValues := createPrometheusLabelKeysValues("annotation", sa.Annotations, allowAnnotations)
 			m := metric.Metric{
 				LabelKeys:   annotationKeys,
@@ -204,6 +205,9 @@ func createServiceAccountLabelsGenerator(allowLabelsList []string) generator.Fam
 		basemetrics.ALPHA,
 		"",
 		wrapServiceAccountFunc(func(sa *v1.ServiceAccount) *metric.Family {
+			if len(allowLabelsList) == 0 {
+				return &metric.Family{}
+			}
 			labelKeys, labelValues := createPrometheusLabelKeysValues("label", sa.Labels, allowLabelsList)
 			m := metric.Metric{
 				LabelKeys:   labelKeys,

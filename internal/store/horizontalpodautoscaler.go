@@ -217,10 +217,10 @@ func createHPASpecTargetMetric() generator.FamilyGenerator {
 				}
 
 				if metricTarget.Value != nil {
-					metricMap[value] = float64(metricTarget.Value.MilliValue()) / 1000
+					metricMap[value] = convertValueToFloat64(metricTarget.Value)
 				}
 				if metricTarget.AverageValue != nil {
-					metricMap[average] = float64(metricTarget.AverageValue.MilliValue()) / 1000
+					metricMap[average] = convertValueToFloat64(metricTarget.AverageValue)
 				}
 				if metricTarget.AverageUtilization != nil {
 					metricMap[utilization] = float64(*metricTarget.AverageUtilization)
@@ -276,10 +276,10 @@ func createHPAStatusTargetMetric() generator.FamilyGenerator {
 				}
 
 				if currentMetric.Value != nil {
-					metricMap[value] = float64(currentMetric.Value.MilliValue()) / 1000
+					metricMap[value] = convertValueToFloat64(currentMetric.Value)
 				}
 				if currentMetric.AverageValue != nil {
-					metricMap[average] = float64(currentMetric.AverageValue.MilliValue()) / 1000
+					metricMap[average] = convertValueToFloat64(currentMetric.AverageValue)
 				}
 				if currentMetric.AverageUtilization != nil {
 					metricMap[utilization] = float64(*currentMetric.AverageUtilization)
@@ -344,6 +344,9 @@ func createHPAAnnotations(allowAnnotationsList []string) generator.FamilyGenerat
 		basemetrics.ALPHA,
 		"",
 		wrapHPAFunc(func(a *autoscaling.HorizontalPodAutoscaler) *metric.Family {
+			if len(allowAnnotationsList) == 0 {
+				return &metric.Family{}
+			}
 			annotationKeys, annotationValues := createPrometheusLabelKeysValues("annotation", a.Annotations, allowAnnotationsList)
 			return &metric.Family{
 				Metrics: []*metric.Metric{
@@ -366,6 +369,9 @@ func createHPALabels(allowLabelsList []string) generator.FamilyGenerator {
 		basemetrics.STABLE,
 		"",
 		wrapHPAFunc(func(a *autoscaling.HorizontalPodAutoscaler) *metric.Family {
+			if len(allowLabelsList) == 0 {
+				return &metric.Family{}
+			}
 			labelKeys, labelValues := createPrometheusLabelKeysValues("label", a.Labels, allowLabelsList)
 			return &metric.Family{
 				Metrics: []*metric.Metric{

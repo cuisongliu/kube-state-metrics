@@ -49,8 +49,8 @@ func serviceMetricFamilies(allowAnnotationsList, allowLabelsList []string) []gen
 			"",
 			wrapSvcFunc(func(s *v1.Service) *metric.Family {
 				m := metric.Metric{
-					LabelKeys:   []string{"cluster_ip", "external_name", "load_balancer_ip"},
-					LabelValues: []string{s.Spec.ClusterIP, s.Spec.ExternalName, s.Spec.LoadBalancerIP},
+					LabelKeys:   []string{"cluster_ip", "external_name", "load_balancer_ip", "external_traffic_policy"},
+					LabelValues: []string{s.Spec.ClusterIP, s.Spec.ExternalName, s.Spec.LoadBalancerIP, string(s.Spec.ExternalTrafficPolicy)},
 					Value:       1,
 				}
 				return &metric.Family{Metrics: []*metric.Metric{&m}}
@@ -97,6 +97,9 @@ func serviceMetricFamilies(allowAnnotationsList, allowLabelsList []string) []gen
 			basemetrics.ALPHA,
 			"",
 			wrapSvcFunc(func(s *v1.Service) *metric.Family {
+				if len(allowAnnotationsList) == 0 {
+					return &metric.Family{}
+				}
 				annotationKeys, annotationValues := createPrometheusLabelKeysValues("annotation", s.Annotations, allowAnnotationsList)
 				m := metric.Metric{
 					LabelKeys:   annotationKeys,
@@ -113,6 +116,9 @@ func serviceMetricFamilies(allowAnnotationsList, allowLabelsList []string) []gen
 			basemetrics.STABLE,
 			"",
 			wrapSvcFunc(func(s *v1.Service) *metric.Family {
+				if len(allowLabelsList) == 0 {
+					return &metric.Family{}
+				}
 				labelKeys, labelValues := createPrometheusLabelKeysValues("label", s.Labels, allowLabelsList)
 				m := metric.Metric{
 					LabelKeys:   labelKeys,

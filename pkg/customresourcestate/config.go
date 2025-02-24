@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"strings"
 
+	"k8s.io/kube-state-metrics/v2/pkg/metric"
+
 	"github.com/gobuffalo/flect"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/klog/v2"
@@ -47,6 +49,10 @@ type MetricsSpec struct {
 
 // Resource configures a custom resource for metric generation.
 type Resource struct {
+
+	// Labels are added to all metrics. If the same key is used in a metric, the value from the metric will overwrite the value here.
+	Labels `yaml:",inline" json:",inline"`
+
 	// MetricNamePrefix defines a prefix for all metrics of the resource.
 	// If set to "", no prefix will be added.
 	// Example: If set to "foo", MetricNamePrefix will be "foo_<metric>".
@@ -55,16 +61,13 @@ type Resource struct {
 	// GroupVersionKind of the custom resource to be monitored.
 	GroupVersionKind GroupVersionKind `yaml:"groupVersionKind" json:"groupVersionKind"`
 
-	// Labels are added to all metrics. If the same key is used in a metric, the value from the metric will overwrite the value here.
-	Labels `yaml:",inline" json:",inline"`
+	// ResourcePlural sets the plural name of the resource. Defaults to the plural version of the Kind according to flect.Pluralize.
+	ResourcePlural string `yaml:"resourcePlural" json:"resourcePlural"`
 
 	// Metrics are the custom resource fields to be collected.
 	Metrics []Generator `yaml:"metrics" json:"metrics"`
 	// ErrorLogV defines the verbosity threshold for errors logged for this resource.
 	ErrorLogV klog.Level `yaml:"errorLogV" json:"errorLogV"`
-
-	// ResourcePlural sets the plural name of the resource. Defaults to the plural version of the Kind according to flect.Pluralize.
-	ResourcePlural string `yaml:"resourcePlural" json:"resourcePlural"`
 }
 
 // GetMetricNamePrefix returns the prefix to use for metrics.
@@ -130,15 +133,15 @@ func (l Labels) Merge(other Labels) Labels {
 
 // Generator describes a unique metric name.
 type Generator struct {
-	// Name of the metric. Subject to prefixing based on the configuration of the Resource.
-	Name string `yaml:"name" json:"name"`
-	// Help text for the metric.
-	Help string `yaml:"help" json:"help"`
 	// Each targets a value or values from the resource.
 	Each Metric `yaml:"each" json:"each"`
 
 	// Labels are added to all metrics. Labels from Each will overwrite these if using the same key.
 	Labels `yaml:",inline" json:",inline"` // json will inline because it is already tagged
+	// Name of the metric. Subject to prefixing based on the configuration of the Resource.
+	Name string `yaml:"name" json:"name"`
+	// Help text for the metric.
+	Help string `yaml:"help" json:"help"`
 	// ErrorLogV defines the verbosity threshold for errors logged for this metric. Must be non-zero to override the resource setting.
 	ErrorLogV klog.Level `yaml:"errorLogV" json:"errorLogV"`
 }
@@ -146,9 +149,6 @@ type Generator struct {
 // Metric defines a metric to expose.
 // +union
 type Metric struct {
-	// Type defines the type of the metric.
-	// +unionDiscriminator
-	Type MetricType `yaml:"type" json:"type"`
 
 	// Gauge defines a gauge metric.
 	// +optional
@@ -159,6 +159,9 @@ type Metric struct {
 	// Info defines an info metric.
 	// +optional
 	Info *MetricInfo `yaml:"info" json:"info"`
+	// Type defines the type of the metric.
+	// +unionDiscriminator
+	Type metric.Type `yaml:"type" json:"type"`
 }
 
 // ConfigDecoder is for use with FromConfig.
@@ -170,9 +173,16 @@ type ConfigDecoder interface {
 func FromConfig(decoder ConfigDecoder, discovererInstance *discovery.CRDiscoverer) (func() ([]customresource.RegistryFactory, error), error) {
 	var customResourceConfig Metrics
 	factoriesIndex := map[string]bool{}
+
+	// Decode the configuration.
 	if err := decoder.Decode(&customResourceConfig); err != nil {
 		return nil, fmt.Errorf("failed to parse Custom Resource State metrics: %w", err)
 	}
+
+	// Override the configuration with any custom overrides.
+	configOverrides(&customResourceConfig)
+
+	// Create a factory for each resource.
 	fn := func() (factories []customresource.RegistryFactory, err error) {
 		resources := customResourceConfig.Spec.Resources
 		// resolvedGVKPs will have the final list of GVKs, in addition to the resolved G** resources.
@@ -195,7 +205,16 @@ func FromConfig(decoder ConfigDecoder, discovererInstance *discovery.CRDiscovere
 			if err != nil {
 				return nil, fmt.Errorf("failed to create metrics factory for %s: %w", resource.GroupVersionKind, err)
 			}
-			gvrString := util.GVRFromType(factory.Name(), factory.ExpectedType()).String()
+			gvr, err := util.GVRFromType(factory.Name(), factory.ExpectedType())
+			if err != nil {
+				return nil, fmt.Errorf("failed to create GVR for %s: %w", resource.GroupVersionKind, err)
+			}
+			var gvrString string
+			if gvr != nil {
+				gvrString = gvr.String()
+			} else {
+				gvrString = factory.Name()
+			}
 			if _, ok := factoriesIndex[gvrString]; ok {
 				klog.InfoS("reloaded factory", "GVR", gvrString)
 			}
@@ -205,4 +224,16 @@ func FromConfig(decoder ConfigDecoder, discovererInstance *discovery.CRDiscovere
 		return factories, nil
 	}
 	return fn, nil
+}
+
+// configOverrides applies overrides to the configuration.
+func configOverrides(config *Metrics) {
+	for i := range config.Spec.Resources {
+		for j := range config.Spec.Resources[i].Metrics {
+
+			// Override the metric type to lowercase, so the internals have a single source of truth for metric type definitions.
+			// This is done as a convenience measure for users, so they don't have to remember the exact casing.
+			config.Spec.Resources[i].Metrics[j].Each.Type = metric.Type(strings.ToLower(string(config.Spec.Resources[i].Metrics[j].Each.Type)))
+		}
+	}
 }
