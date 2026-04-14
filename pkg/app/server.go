@@ -466,24 +466,53 @@ func buildTelemetryServer(registry prometheus.Gatherer, authFilter bool, kubeCon
 	// Add metricsPath
 	metricsHandler := promhttp.HandlerFor(registry, promhttp.HandlerOpts{ErrorLog: sLogger})
 
+	pprofHandlers := map[string]http.Handler{
+		"/debug/pprof/":        http.HandlerFunc(pprof.Index),
+		"/debug/pprof/cmdline": http.HandlerFunc(pprof.Cmdline),
+		"/debug/pprof/profile": http.HandlerFunc(pprof.Profile),
+		"/debug/pprof/symbol":  http.HandlerFunc(pprof.Symbol),
+		"/debug/pprof/trace":   http.HandlerFunc(pprof.Trace),
+	}
+
 	// Add Authentication/Authorization via Kubernetes API
 	if authFilter {
+		unavailable := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "auth filter unavailable", http.StatusServiceUnavailable)
+		})
+
 		client, err := rest.HTTPClientFor(kubeConfig)
 		if err != nil {
 			klog.ErrorS(err, "failed to create HTTP client from config")
-		}
-
-		metricsFilter, err := filters.WithAuthenticationAndAuthorization(kubeConfig, client)
-		if err != nil {
+			metricsHandler = unavailable
+			pprofHandlers = map[string]http.Handler{}
+		} else if metricsFilter, err := filters.WithAuthenticationAndAuthorization(kubeConfig, client); err != nil {
 			klog.ErrorS(err, "failed to create auth handler")
-		}
-
-		metricsHandler, err = metricsFilter(klog.Background(), metricsHandler)
-		if err != nil {
-			klog.ErrorS(err, "failed to apply metrics filter")
+			metricsHandler = unavailable
+			pprofHandlers = map[string]http.Handler{}
+		} else {
+			metricsHandler, err = metricsFilter(klog.Background(), metricsHandler)
+			if err != nil {
+				klog.ErrorS(err, "failed to apply metrics filter")
+				metricsHandler = unavailable
+				pprofHandlers = map[string]http.Handler{}
+			} else {
+				for path, h := range pprofHandlers {
+					protected, err := metricsFilter(klog.Background(), h)
+					if err != nil {
+						klog.ErrorS(err, "failed to apply auth filter to pprof handler", "path", path)
+						delete(pprofHandlers, path)
+						continue
+					}
+					pprofHandlers[path] = protected
+				}
+			}
 		}
 	}
 	mux.Handle(metricsPath, metricsHandler)
+
+	for path, h := range pprofHandlers {
+		mux.Handle(path, h)
+	}
 
 	// Add readyzPath
 	mux.Handle(readyzPath, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -537,34 +566,28 @@ func handleClusterDelegationForProber(client kubernetes.Interface, probeType str
 func buildMetricsServer(m *metricshandler.MetricsHandler, durationObserver prometheus.ObserverVec, client kubernetes.Interface, authFilter bool, kubeConfig *rest.Config) *http.ServeMux {
 	mux := http.NewServeMux()
 
-	// TODO: This doesn't belong into serveMetrics
-	mux.Handle("/debug/pprof/", http.HandlerFunc(pprof.Index))
-	mux.Handle("/debug/pprof/cmdline", http.HandlerFunc(pprof.Cmdline))
-	mux.Handle("/debug/pprof/profile", http.HandlerFunc(pprof.Profile))
-	mux.Handle("/debug/pprof/symbol", http.HandlerFunc(pprof.Symbol))
-	mux.Handle("/debug/pprof/trace", http.HandlerFunc(pprof.Trace))
-
 	// Add metricsPath
-	metricsHandler := promhttp.InstrumentHandlerDuration(durationObserver, m)
+	var metricsHandler http.Handler = promhttp.InstrumentHandlerDuration(durationObserver, m)
 
 	// Add Authentication/Authorization via Kubernetes API
 	if authFilter {
+		unavailable := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "auth filter unavailable", http.StatusServiceUnavailable)
+		})
+
 		client, err := rest.HTTPClientFor(kubeConfig)
 		if err != nil {
 			klog.ErrorS(err, "failed to create HTTP client from config")
-		}
-
-		metricsFilter, err := filters.WithAuthenticationAndAuthorization(kubeConfig, client)
-		if err != nil {
+			metricsHandler = unavailable
+		} else if metricsFilter, err := filters.WithAuthenticationAndAuthorization(kubeConfig, client); err != nil {
 			klog.ErrorS(err, "failed to create auth handler")
-		}
-
-		handler, err := metricsFilter(klog.Background(), metricsHandler)
-		if err != nil {
+			metricsHandler = unavailable
+		} else if handler, err := metricsFilter(klog.Background(), metricsHandler); err != nil {
 			klog.ErrorS(err, "failed to apply metrics filter")
+			metricsHandler = unavailable
+		} else {
+			metricsHandler = handler
 		}
-		metricsHandler = handler.(http.HandlerFunc)
-
 	}
 
 	mux.Handle(metricsPath, metricsHandler)
