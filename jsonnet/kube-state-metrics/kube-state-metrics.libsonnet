@@ -492,15 +492,15 @@
         {
           metadata: {
             name: shardName,
-            labels: { 'app.kubernetes.io/name': shardName },
+            labels: { 'kube-state-metrics.io/shard': std.toString(shard)},
           },
           spec: {
             selector: {
-              matchLabels: { 'app.kubernetes.io/name': shardName },
+              matchLabels: { 'kube-state-metrics.io/shard': std.toString(shard) },
             },
             template: {
               metadata: {
-                labels: { 'app.kubernetes.io/name': shardName },
+                labels: { 'kube-state-metrics.io/shard': std.toString(shard) },
               },
               spec: {
                 containers: [c],
