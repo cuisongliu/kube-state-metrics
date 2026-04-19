@@ -1,1 +1,1 @@
-(import 'standard.jsonnet').deploymentsharding
+(import 'standard.jsonnet').deploymentsharding()

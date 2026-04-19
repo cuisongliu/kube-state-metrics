@@ -477,14 +477,13 @@
     clusterRole: ksm.clusterRole,
     clusterRoleBinding: ksm.clusterRoleBinding,
   },
-  deploymentsharding::
-    local totalShards = 3;
+  deploymentsharding(totalShards=3)::
     local deploymentShard(shard) =
-      local shardName = ksm.name + '-' + shard;
+      local shardName = std.toString(ksm.name) + '-' + std.toString(shard);
       local c = ksm.deployment.spec.template.spec.containers[0] {
         args: [
-          '--shard=' + shard,
-          '--total-shards=' + totalShards,
+          '--shard=' + std.toString(shard),
+          '--total-shards=' + std.toString(totalShards),
         ],
       };
       std.mergePatch(
@@ -510,7 +509,7 @@
         }
       );
     {
-      ['deployment-' + i]: deploymentShard(i)
+      ['deployment-' + std.toString(i)]: deploymentShard(i)
       for i in std.range(0, totalShards - 1)
     } + {
       service: ksm.service,
