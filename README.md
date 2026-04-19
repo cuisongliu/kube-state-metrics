@@ -264,12 +264,14 @@ If you prefer to manage shards as independent `Deployment` objects instead of us
 Example manifests for deployment-based sharding are available in [`/examples/deploymentsharding`](./examples/deploymentsharding).
 
 Compared to automated sharding, this approach:
-- Uses the standard `Deployment` rolling update behavior, which can reduce the risk of metric gaps during upgrades
-- Gives each shard a fixed, explicitly assigned shard index
+
+* Uses the standard `Deployment` rolling update behavior, which can reduce the risk of metric gaps during upgrades
+* Gives each shard a fixed, explicitly assigned shard index
 
 The trade-offs are that:
-- You must manage each shard as a separate Kubernetes `Deployment`
-- You must keep the shard configuration consistent across all shard `Deployment` objects, such as the total shard count and shared settings
+
+* You must manage each shard as a separate Kubernetes `Deployment`
+* You must keep the shard configuration consistent across all shard `Deployment` objects, such as the total shard count and shared settings
 
 ### Daemonset sharding for pod metrics
 
