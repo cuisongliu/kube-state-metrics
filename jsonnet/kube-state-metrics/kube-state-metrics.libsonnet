@@ -477,7 +477,7 @@
     clusterRole: ksm.clusterRole,
     clusterRoleBinding: ksm.clusterRoleBinding,
   },
-  deploymentsharding(totalShards=3)::
+  deploymentsharding(totalShards=3,replicas=1)::
     local deploymentShard(shard) =
       local shardName = std.toString(ksm.name) + '-' + std.toString(shard);
       local c = ksm.deployment.spec.template.spec.containers[0] {
@@ -494,6 +494,7 @@
             labels: { 'kube-state-metrics.io/shard': std.toString(shard)},
           },
           spec: {
+            replicas: replicas,
             selector: {
               matchLabels: { 'kube-state-metrics.io/shard': std.toString(shard) },
             },
