@@ -272,6 +272,7 @@ The trade-offs are that:
 
 * You must manage each shard as a separate Kubernetes `Deployment`
 * You must keep the shard configuration consistent across all shard `Deployment` objects, such as the total shard count and shared settings
+  * This means scaling the number of shards requires redeploying all of them
 
 ### Daemonset sharding for pod metrics
 
