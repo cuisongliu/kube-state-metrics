@@ -444,6 +444,58 @@ kube_state_metrics_total_shards 1
 	}
 }
 
+func TestPprofRouting(t *testing.T) {
+	t.Parallel()
+
+	pprofPaths := []string{
+		"/debug/pprof/",
+		"/debug/pprof/cmdline",
+		"/debug/pprof/profile",
+		"/debug/pprof/symbol",
+		"/debug/pprof/trace",
+	}
+
+	pprofPatterns := make(map[string]struct{}, len(pprofPaths))
+	for _, path := range pprofPaths {
+		pprofPatterns[path] = struct{}{}
+	}
+
+	fakeConfig := &rest.Config{Host: "https://fake-server:443"}
+
+	for _, authEnabled := range []bool{false, true} {
+		var cfg *rest.Config
+		if authEnabled {
+			cfg = fakeConfig
+		}
+
+		reg := prometheus.NewRegistry()
+		telemetryMux := buildTelemetryServer(reg, authEnabled, cfg)
+		for _, path := range pprofPaths {
+			req := httptest.NewRequest("GET", "http://localhost:8081"+path, nil)
+			_, pattern := telemetryMux.Handler(req)
+			if _, ok := pprofPatterns[pattern]; !ok {
+				t.Errorf("authFilter=%v: expected pprof path %s to be registered on telemetry server, matched pattern %q", authEnabled, path, pattern)
+			}
+		}
+
+		opts := options.NewOptions()
+		metricsMux := buildMetricsServer(
+			metricshandler.New(opts, fake.NewSimpleClientset(), nil, false),
+			prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "test_duration_seconds", Help: "helpless"}, []string{"method"}),
+			fake.NewSimpleClientset(),
+			authEnabled,
+			cfg,
+		)
+		for _, path := range pprofPaths {
+			req := httptest.NewRequest("GET", "http://localhost:8080"+path, nil)
+			_, pattern := metricsMux.Handler(req)
+			if _, ok := pprofPatterns[pattern]; ok {
+				t.Errorf("authFilter=%v: expected pprof path %s to be unregistered on metrics server, matched pattern %q", authEnabled, path, pattern)
+			}
+		}
+	}
+}
+
 // TestShardingEquivalenceScrapeCycle is a simple smoke test covering the entire cycle from
 // cache filling to scraping comparing a sharded with an unsharded setup.
 func TestShardingEquivalenceScrapeCycle(t *testing.T) {
