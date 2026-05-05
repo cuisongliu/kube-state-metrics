@@ -481,7 +481,7 @@ func TestPprofRouting(t *testing.T) {
 		opts := options.NewOptions()
 		metricsMux := buildMetricsServer(
 			metricshandler.New(opts, fake.NewSimpleClientset(), nil, false),
-			prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "test_duration_seconds"}, []string{"method"}),
+			prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "test_duration_seconds", Help: "helpless"}, []string{"method"}),
 			fake.NewSimpleClientset(),
 			authEnabled,
 			cfg,
